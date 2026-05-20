@@ -1,6 +1,6 @@
 # 🔮 塔羅 AI 占卜 Web App
 
-結合 Google Gemini AI 的全功能塔羅占卜應用。
+結合 Google Gemini AI 的塔羅占卜應用。
 
 ---
 
