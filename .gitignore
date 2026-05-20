@@ -1,0 +1,39 @@
+# ========== Node / Frontend ==========
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+out/
+coverage/
+.cache/
+.parcel-cache/
+.eslintcache
+
+# ========== Python / Backend ==========
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+.pytest_cache/
+.mypy_cache/
+venv/
+.env
+
+# ========== Environment ==========
+.env
+.env.*
+!.env.example
+
+# ========== System ==========
+.DS_Store
+Thumbs.db
+
+# ========== IDE ==========
+.vscode/
+.idea/
+
+# ========== Logs ==========
+*.log
+logs/
