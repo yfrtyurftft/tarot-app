@@ -1,7 +1,11 @@
 # 🔮 塔羅 AI 占卜 Web App
 
 結合 Google Gemini AI 的塔羅占卜應用。
+
+---
+
 demo: https://tarot-app-ten-dun.vercel.app
+
 ---
 
 ## 📁 專案結構
