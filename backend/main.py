@@ -39,7 +39,6 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",   # 本地開發
         "https://tarot-app-ten-dun.vercel.app",    # Vercel 部署
-        "*",                       # 開發期間開放，上線後請限縮
     ],
     allow_credentials=True,
     allow_methods=["*"],
