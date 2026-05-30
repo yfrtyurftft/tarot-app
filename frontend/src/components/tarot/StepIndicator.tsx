@@ -29,7 +29,9 @@ export function StepIndicator({ mode }: StepIndicatorProps) {
 
   // 顯示的步驟（排除 CHAT）
   const steps = MODE_STEPS[mode].filter((s) => s !== 'CHAT')
-  const currentIndex = steps.indexOf(step)
+  
+  // 修正型別報錯：如果當前是 CHAT，直接設為 -1，否則才進行尋找
+  const currentIndex = step === 'CHAT' ? -1 : steps.indexOf(step)
 
   if (steps.length <= 1) return null
 
