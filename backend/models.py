@@ -13,7 +13,7 @@ class TarotCard(BaseModel):
     name_en: str
     meaning_upright: str    # 正位含義
     meaning_reversed: str   # 逆位含義
-    image: str              # 圖片 URL
+    image: str              # 本地圖片路徑
     arcana: str             # "major" | "minor"
     suit: Optional[str] = None   # "wands" | "cups" | "swords" | "pentacles"
     number: Optional[int] = None
