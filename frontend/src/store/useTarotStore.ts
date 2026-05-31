@@ -1,18 +1,23 @@
 // ============================================================
-// store/useTarotStore.ts — Zustand 全域狀態管理
-// 新增：isStreaming、appendInterpretation 供 SSE 串流使用
+// store/useTarotStore.ts — Zustand（Vercel safe + TS safe）
 // ============================================================
 
 import { create } from 'zustand'
 import type {
-  Step, TarotMode, SpreadLayout, Persona,
-  DrawnCard, ChatMessage, RecommendSpreadResponse, TarotCard,
+  Step,
+  TarotMode,
+  SpreadLayout,
+  Persona,
+  DrawnCard,
+  ChatMessage,
+  RecommendSpreadResponse,
+  TarotCard,
 } from '@/types/tarot'
 
 export const MODE_STEPS: Record<TarotMode, Step[]> = {
-  ai:    ['INPUT_QUESTION', 'SELECT_PERSONA', 'CONFIRM_SPREAD', 'DRAW', 'RESULT', 'CHAT'],
-  yesno: ['SELECT_SPREAD',  'SELECT_PERSONA', 'INPUT_QUESTION', 'DRAW', 'RESULT', 'CHAT'],
-  love:  ['SELECT_SPREAD',  'SELECT_PERSONA', 'INPUT_QUESTION', 'DRAW', 'RESULT', 'CHAT'],
+  ai: ['INPUT_QUESTION', 'SELECT_PERSONA', 'CONFIRM_SPREAD', 'DRAW', 'RESULT', 'CHAT'],
+  yesno: ['SELECT_SPREAD', 'SELECT_PERSONA', 'INPUT_QUESTION', 'DRAW', 'RESULT', 'CHAT'],
+  love: ['SELECT_SPREAD', 'SELECT_PERSONA', 'INPUT_QUESTION', 'DRAW', 'RESULT', 'CHAT'],
   daily: ['SELECT_PERSONA', 'DRAW', 'RESULT', 'CHAT'],
 }
 
@@ -66,7 +71,7 @@ interface TarotState {
   reset: () => void
 }
 
-const MODE_STEPS_MAP = MODE_STEPS
+const MODE_MAP = MODE_STEPS
 
 const INITIAL_STATE = {
   mode: 'ai' as TarotMode,
@@ -93,20 +98,20 @@ export const useTarotStore = create<TarotState>((set, get) => ({
     set({
       ...INITIAL_STATE,
       mode,
-      step: MODE_STEPS_MAP[mode][0],
+      step: MODE_MAP[mode][0],
       cardCache: get().cardCache,
     }),
 
   nextStep: () => {
     const { mode, step } = get()
-    const steps = MODE_STEPS_MAP[mode]
+    const steps = MODE_MAP[mode]
     const i = steps.indexOf(step)
     if (i < steps.length - 1) set({ step: steps[i + 1] })
   },
 
   prevStep: () => {
     const { mode, step } = get()
-    const steps = MODE_STEPS_MAP[mode]
+    const steps = MODE_MAP[mode]
     const i = steps.indexOf(step)
     if (i > 0) set({ step: steps[i - 1] })
   },
@@ -151,7 +156,7 @@ export const useTarotStore = create<TarotState>((set, get) => ({
     set((state) => ({
       ...INITIAL_STATE,
       mode: state.mode,
-      step: MODE_STEPS_MAP[state.mode][0],
+      step: MODE_MAP[state.mode][0],
       cardCache: state.cardCache,
     })),
 }))
