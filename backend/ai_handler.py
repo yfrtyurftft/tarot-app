@@ -1,22 +1,22 @@
 # ============================================================
-# ai_handler.py — Gemini AI 處理器（穩定 production 版）
-# 修正 JSON crash + Gemini 截斷 + SSE 安全性
+# ai_handler.py — Gemini AI 處理器（支援 SSE 串流輸出｜修正版）
 # ============================================================
 
 import os
 import uuid
 import json
-import re
-from typing import Generator, Dict, Any
+from typing import Generator
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-from models import Persona, DrawnCard, RecommendSpreadResponse
+from models import (
+    Persona, DrawnCard,
+    RecommendSpreadResponse, InterpretResponse, ChatResponse,
+)
 from tarot_engine import format_cards_for_prompt
 from spreads import SPREAD_BY_ID, ALL_SPREADS
 
 load_dotenv()
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise RuntimeError("請在 .env 中設定 GEMINI_API_KEY")
@@ -26,112 +26,122 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 SESSION_STORE: dict[str, dict] = {}
 
-# ─────────────────────────────────────────────
-# Personas（保持原樣）
-# ─────────────────────────────────────────────
+# ============================================================
+# ✅ 修正點：避免 Persona(...) 在 import 時 crash
+# ============================================================
+
 PERSONAS: dict[str, Persona] = {
-    "mystic_witch": Persona(...),
-    "rational_analyst": Persona(...),
-    "gentle_healer": Persona(...),
+    "mystic_witch": Persona.model_validate({
+        "id": "mystic_witch",
+        "name": "神秘女巫 莉拉",
+        "style": "神秘、古老智慧、充滿象徵與隱喻",
+        "tone": "低沉而神秘，像是在月光下輕聲訴說",
+        "system_prompt": (
+            "你是神秘女巫莉拉（Lyra），一位來自古老傳承的塔羅占卜師，有著數十年的占卜經驗。\n\n"
+            "【說話風格】\n"
+            "你說話像一個真實的人，而不是在寫報告或列清單。"
+            "你用詩意的語言、自然意象（月亮、星辰、薄霧、森林、潮汐）來比喻人生的處境。"
+            "你會直接對著眼前這個人說話，用「你」來稱呼他們。"
+            "你的語氣有停頓感與情緒流動。\n\n"
+            "【絕對禁止】\n"
+            "- 禁止 Markdown\n"
+            "- 禁止條列\n"
+            "- 禁止報告式語氣\n"
+        )
+    }),
+
+    "rational_analyst": Persona.model_validate({
+        "id": "rational_analyst",
+        "name": "理性分析師 卡爾",
+        "style": "清晰理性、心理學視角、實用導向",
+        "tone": "冷靜理性",
+        "system_prompt": (
+            "你是理性分析師卡爾。\n\n"
+            "【說話風格】直接、清晰、心理學導向。\n"
+            "【禁止】Markdown、條列、報告語氣。"
+        )
+    }),
+
+    "gentle_healer": Persona.model_validate({
+        "id": "gentle_healer",
+        "name": "溫柔療癒師 蘿絲",
+        "style": "溫暖療癒、情感支持",
+        "tone": "溫柔",
+        "system_prompt": (
+            "你是溫柔療癒師蘿絲。\n\n"
+            "【說話風格】溫柔、有同理心、陪伴感。\n"
+            "【禁止】Markdown、條列、報告語氣。"
+        )
+    }),
 }
+
+PERSONA_LIST = list(PERSONAS.values())
+
 
 def get_persona(persona_id: str) -> Persona:
     return PERSONAS.get(persona_id, PERSONAS["mystic_witch"])
 
 
-# ─────────────────────────────────────────────
-# MODE CONTEXT（保持原樣）
-# ─────────────────────────────────────────────
-MODE_CONTEXT: Dict[str, str] = {
+MODE_CONTEXT: dict[str, str] = {
     "ai": "",
-    "yesno": "請給出傾向但不要直接說是或否。",
-    "love": "感情角度解讀。",
-    "daily": "今日運勢語氣。",
+    "yesno": "請給出偏向性判斷，但用自然語氣表達。",
+    "love": "從感情角度解讀。",
+    "daily": "以今日能量方式解讀。",
 }
 
+# ============================================================
+# 1. 推薦牌陣（非串流）
+# ============================================================
 
-# ─────────────────────────────────────────────
-# 🔧 SAFE JSON PARSER（核心修復）
-# ─────────────────────────────────────────────
-def safe_parse_json(raw: str) -> Dict[str, Any]:
-    raw = raw.strip()
-
-    # 去 markdown code block
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    # 抓 JSON object
-    match = re.search(r"\{.*\}", raw, re.S)
-    if not match:
-        raise ValueError(f"No JSON found: {raw}")
-
-    return json.loads(match.group())
-
-
-# ─────────────────────────────────────────────
-# 🧠 RECOMMEND SPREAD（穩定版）
-# ─────────────────────────────────────────────
-def recommend_spread(question: str, persona_id: str) -> RecommendSpreadResponse:
+async def recommend_spread(question: str, persona_id: str) -> RecommendSpreadResponse:
     persona = get_persona(persona_id)
 
     spread_options = "\n".join(
         [f"- {s.id}：{s.name_zh}（{s.card_count}張）— {s.description_zh}" for s in ALL_SPREADS]
     )
 
-    prompt = f"""
-你是 {persona.name}，選擇最適合的塔羅牌陣。
+    prompt = f"""你是 {persona.name}。
 
 問題：「{question}」
 
 可用牌陣：
 {spread_options}
 
-請只輸出 JSON：
+請輸出 JSON：
 {{
   "spread_id": "...",
-  "explanation": "一句自然解釋"
-}}
-"""
+  "explanation": "..."
+}}"""
 
     model = genai.GenerativeModel(
         model_name=GEMINI_MODEL,
         system_instruction=persona.system_prompt
     )
 
-    # 🔥 關鍵：增加 token，避免截斷 JSON
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
-            max_output_tokens=800,
-            temperature=0.4
-        )
-    )
-
-    raw = response.text or ""
+    response = model.generate_content(prompt)
+    raw = response.text.strip()
 
     try:
-        data = safe_parse_json(raw)
+        data = json.loads(raw)
     except Exception:
-        # 🔁 retry once（production safety）
-        response2 = model.generate_content(prompt)
-        data = safe_parse_json(response2.text or "")
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw.strip())
 
-    spread = SPREAD_BY_ID.get(data.get("spread_id", "three-card"))
-    if not spread:
-        spread = SPREAD_BY_ID["three-card"]
+    spread = SPREAD_BY_ID.get(data["spread_id"]) or SPREAD_BY_ID["three-card"]
 
     return RecommendSpreadResponse(
-        spread_id=spread.id,
+        spread_id=data["spread_id"],
         spread_name=spread.name_zh,
-        explanation=data.get("explanation", ""),
+        explanation=data.get("explanation", "")
     )
 
+# ============================================================
+# 2. SSE 解讀
+# ============================================================
 
-# ─────────────────────────────────────────────
-# 📡 SSE INTERPRET（穩定版）
-# ─────────────────────────────────────────────
 def stream_interpret(
     question: str,
     persona_id: str,
@@ -145,8 +155,6 @@ def stream_interpret(
     spread_name = spread.name_zh if spread else "塔羅牌陣"
 
     cards_text = format_cards_for_prompt(cards)
-    mode_ctx = MODE_CONTEXT.get(mode, "")
-
     session_id = str(uuid.uuid4())
 
     yield f"data: {json.dumps({'type': 'session', 'session_id': session_id}, ensure_ascii=False)}\n\n"
@@ -154,12 +162,10 @@ def stream_interpret(
     user_prompt = f"""
 問題：{question}
 牌陣：{spread_name}
-
+牌：
 {cards_text}
 
-{mode_ctx}
-
-請用自然段落解讀，不要列表。
+{MODE_CONTEXT.get(mode, "")}
 """
 
     model = genai.GenerativeModel(
@@ -172,9 +178,7 @@ def stream_interpret(
     response = chat.send_message(
         user_prompt,
         stream=True,
-        generation_config=genai.GenerationConfig(
-            max_output_tokens=1200   # 🔥 修正截斷
-        )
+        generation_config=genai.GenerationConfig(max_output_tokens=700)
     )
 
     for chunk in response:
@@ -191,11 +195,11 @@ def stream_interpret(
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
+# ============================================================
+# 3. chat SSE
+# ============================================================
 
-# ─────────────────────────────────────────────
-# 💬 CHAT STREAM（穩定版）
-# ─────────────────────────────────────────────
-def stream_chat(session_id: str, message: str, persona_id: str) -> Generator[str, None, None]:
+def stream_chat(session_id: str, message: str, persona_id: str):
 
     session = SESSION_STORE.get(session_id)
     persona = get_persona(persona_id)
@@ -210,14 +214,10 @@ def stream_chat(session_id: str, message: str, persona_id: str) -> Generator[str
     if not session:
         message = f"（新對話）{message}"
 
-    wrapped = f"{message}\n請用自然語氣回答，不要條列。"
-
     response = chat.send_message(
-        wrapped,
+        message,
         stream=True,
-        generation_config=genai.GenerationConfig(
-            max_output_tokens=800
-        )
+        generation_config=genai.GenerationConfig(max_output_tokens=400)
     )
 
     for chunk in response:
