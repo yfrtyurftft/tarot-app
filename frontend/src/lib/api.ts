@@ -14,43 +14,44 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     throw new Error(err.detail || `API 錯誤：${res.status}`)
   }
+
   return res.json()
 }
 
 export async function fetchPersonas(): Promise<Persona[]> {
-  return apiFetch<Persona[]>('/api/personas')
+  return apiFetch('/api/personas')
 }
 
 export async function fetchSpreads(mode: TarotMode | 'all' = 'all'): Promise<SpreadLayout[]> {
-  return apiFetch<SpreadLayout[]>(`/api/spreads?mode=${mode}`)
+  return apiFetch(`/api/spreads?mode=${mode}`)
 }
 
 export async function fetchCards(): Promise<TarotCard[]> {
-  return apiFetch<TarotCard[]>('/api/cards')
+  return apiFetch('/api/cards')
 }
 
-export async function drawCards(spreadId: string): Promise<{ cards: DrawnCard[] }> {
-  return apiFetch<{ cards: DrawnCard[] }>('/api/draw', {
+export async function drawCards(spreadId: string) {
+  return apiFetch('/api/draw', {
     method: 'POST',
     body: JSON.stringify({ spread_id: spreadId }),
   })
 }
 
-export async function recommendSpread(
-  question: string,
-  personaId: string
-): Promise<RecommendSpreadResponse> {
-  return apiFetch<RecommendSpreadResponse>('/api/recommend-spread', {
+export async function recommendSpread(question: string, personaId: string) {
+  return apiFetch('/api/recommend-spread', {
     method: 'POST',
     body: JSON.stringify({ question, persona_id: personaId }),
   })
 }
 
-// ── SSE 串流：AI 解讀 ─────────────────────────────────────
+// ============================================================
+// 🟢 SSE interpret（修正核心）
+// ============================================================
 export async function interpretCardsStream(params: {
   question: string
   personaId: string
@@ -58,110 +59,127 @@ export async function interpretCardsStream(params: {
   mode: TarotMode
   spreadId: string
 }, callbacks: {
-  onSession: (sessionId: string) => void  // 收到 session_id 時
-  onText:    (text: string) => void        // 每個文字片段
-  onDone:    () => void                    // 完成
-  onError:   (err: Error) => void          // 錯誤
-}): Promise<void> {
+  onSession: (sessionId: string) => void
+  onText: (text: string) => void
+  onDone: () => void
+  onError: (err: Error) => void
+}) {
   try {
     const res = await fetch(`${API_BASE}/api/interpret/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        question:   params.question,
+        question: params.question,
         persona_id: params.personaId,
-        cards:      params.cards,
-        mode:       params.mode,
-        spread_id:  params.spreadId,
+        cards: params.cards,
+        mode: params.mode,
+        spread_id: params.spreadId,
       }),
     })
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || `API 錯誤：${res.status}`)
+      throw new Error(`API 錯誤：${res.status}`)
     }
 
     await parseSSEStream(res, callbacks)
-  } catch (err) {
-    callbacks.onError(err instanceof Error ? err : new Error(String(err)))
+  } catch (e) {
+    callbacks.onError(e instanceof Error ? e : new Error(String(e)))
   }
 }
 
-// ── SSE 串流：聊天 ────────────────────────────────────────
+// ============================================================
+// 🟢 SSE chat
+// ============================================================
 export async function sendChatMessageStream(params: {
-  sessionId:  string
-  message:    string
-  personaId:  string
+  sessionId: string
+  message: string
+  personaId: string
 }, callbacks: {
-  onText:  (text: string) => void
-  onDone:  () => void
+  onText: (text: string) => void
+  onDone: () => void
   onError: (err: Error) => void
-}): Promise<void> {
+}) {
   try {
     const res = await fetch(`${API_BASE}/api/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: params.sessionId,
-        message:    params.message,
+        message: params.message,
         persona_id: params.personaId,
       }),
     })
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || `API 錯誤：${res.status}`)
+      throw new Error(`API 錯誤：${res.status}`)
     }
 
     await parseSSEStream(res, {
       onSession: () => {},
-      onText:    callbacks.onText,
-      onDone:    callbacks.onDone,
-      onError:   callbacks.onError,
+      onText: callbacks.onText,
+      onDone: callbacks.onDone,
+      onError: callbacks.onError,
     })
-  } catch (err) {
-    callbacks.onError(err instanceof Error ? err : new Error(String(err)))
+  } catch (e) {
+    callbacks.onError(e instanceof Error ? e : new Error(String(e)))
   }
 }
 
-// ── 共用：解析 SSE 串流 ───────────────────────────────────
+// ============================================================
+// 🔥 FIX：SSE parser（你 bug 的核心修正）
+// ============================================================
 async function parseSSEStream(
   res: Response,
   callbacks: {
     onSession: (sessionId: string) => void
-    onText:    (text: string) => void
-    onDone:    () => void
-    onError:   (err: Error) => void
+    onText: (text: string) => void
+    onDone: () => void
+    onError: (err: Error) => void
   }
-): Promise<void> {
-  const reader  = res.body!.getReader()
+) {
+  const reader = res.body!.getReader()
   const decoder = new TextDecoder()
-  let buffer    = ''
+
+  let buffer = ''
 
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''   // 保留未完成的行
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const dataStr = line.slice(6).trim()
-      if (!dataStr) continue
+    // 🔧 FIX 1：用 SSE event boundary，而不是 line split
+    const events = buffer.split('\n\n')
+    buffer = events.pop() ?? ''
 
-      try {
-        const data = JSON.parse(dataStr)
-        if (data.type === 'session') {
-          callbacks.onSession(data.session_id)
-        } else if (data.type === 'text') {
-          callbacks.onText(data.text)
-        } else if (data.type === 'done') {
-          callbacks.onDone()
+    for (const event of events) {
+      const lines = event.split('\n')
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue
+
+        const raw = line.replace('data:', '').trim()
+        if (!raw) continue
+
+        try {
+          const data = JSON.parse(raw)
+
+          if (data.type === 'session') {
+            callbacks.onSession(data.session_id)
+          }
+
+          if (data.type === 'text') {
+            callbacks.onText(data.text)
+          }
+
+          if (data.type === 'done') {
+            callbacks.onDone()
+          }
+
+        } catch (err) {
+          // 🔧 FIX 2：不要 silent fail（你原本會直接吃掉錯誤）
+          console.warn('SSE parse error:', raw)
         }
-      } catch {
-        // 忽略解析錯誤
       }
     }
   }

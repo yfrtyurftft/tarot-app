@@ -20,131 +20,138 @@ interface TarotState {
   mode: TarotMode
   step: Step
 
-  selectedSpread:  SpreadLayout | null
+  selectedSpread: SpreadLayout | null
   selectedPersona: Persona | null
-  drawnCards:      DrawnCard[]
-  question:        string
+  drawnCards: DrawnCard[]
+  question: string
 
-  recommendedSpread:   RecommendSpreadResponse | null
-  isLoadingRecommend:  boolean
+  recommendedSpread: RecommendSpreadResponse | null
+  isLoadingRecommend: boolean
 
-  interpretation:     string
-  sessionId:          string
+  interpretation: string
+  sessionId: string
   isLoadingInterpret: boolean
-  isStreaming:        boolean   // ← AI 正在串流輸出中
+  isStreaming: boolean
 
-  chatHistory:   ChatMessage[]
+  chatHistory: ChatMessage[]
   isChatLoading: boolean
 
   cardCache: Record<string, TarotCard>
 
-  // ── Actions ──────────────────────────────────────────────
-  setMode:            (mode: TarotMode) => void
-  nextStep:           () => void
-  prevStep:           () => void
-  goToStep:           (step: Step) => void
-  setSelectedSpread:  (spread: SpreadLayout) => void
-  setSelectedPersona: (persona: Persona) => void
-  setQuestion:        (question: string) => void
-  setDrawnCards:      (cards: DrawnCard[]) => void
+  setMode: (mode: TarotMode) => void
+  nextStep: () => void
+  prevStep: () => void
+  goToStep: (step: Step) => void
 
-  setRecommendedSpread:  (data: RecommendSpreadResponse | null) => void
+  setSelectedSpread: (spread: SpreadLayout) => void
+  setSelectedPersona: (persona: Persona) => void
+  setQuestion: (question: string) => void
+  setDrawnCards: (cards: DrawnCard[]) => void
+
+  setRecommendedSpread: (data: RecommendSpreadResponse | null) => void
   setIsLoadingRecommend: (loading: boolean) => void
 
-  // 一次設定完整解讀（非串流模式備用）
-  setInterpretation:    (text: string, sessionId: string) => void
-  // 串流：清空後逐字累加
-  clearInterpretation:  () => void
+  setInterpretation: (text: string, sessionId: string) => void
+  clearInterpretation: () => void
   appendInterpretation: (text: string) => void
-  setSessionId:         (id: string) => void
-  setIsLoadingInterpret:(loading: boolean) => void
-  setIsStreaming:       (streaming: boolean) => void
 
-  addChatMessage:   (msg: ChatMessage) => void
+  setSessionId: (id: string) => void
+  setIsLoadingInterpret: (loading: boolean) => void
+  setIsStreaming: (streaming: boolean) => void
+
+  addChatMessage: (msg: ChatMessage) => void
   setIsChatLoading: (loading: boolean) => void
-  setCardCache:     (cards: TarotCard[]) => void
-  reset:            () => void
+
+  setCardCache: (cards: TarotCard[]) => void
+  reset: () => void
 }
 
-const getInitialStep = (mode: TarotMode): Step => MODE_STEPS[mode][0]
+const MODE_STEPS_MAP = MODE_STEPS
 
 const INITIAL_STATE = {
-  mode:                'ai' as TarotMode,
-  step:                'INPUT_QUESTION' as Step,
-  selectedSpread:      null,
-  selectedPersona:     null,
-  drawnCards:          [],
-  question:            '',
-  recommendedSpread:   null,
-  isLoadingRecommend:  false,
-  interpretation:      '',
-  sessionId:           '',
-  isLoadingInterpret:  false,
-  isStreaming:         false,
-  chatHistory:         [],
-  isChatLoading:       false,
-  cardCache:           {},
+  mode: 'ai' as TarotMode,
+  step: 'INPUT_QUESTION' as Step,
+  selectedSpread: null,
+  selectedPersona: null,
+  drawnCards: [],
+  question: '',
+  recommendedSpread: null,
+  isLoadingRecommend: false,
+  interpretation: '',
+  sessionId: '',
+  isLoadingInterpret: false,
+  isStreaming: false,
+  chatHistory: [],
+  isChatLoading: false,
+  cardCache: {},
 }
 
 export const useTarotStore = create<TarotState>((set, get) => ({
   ...INITIAL_STATE,
 
-  setMode: (mode) => set({
-    ...INITIAL_STATE,
-    mode,
-    step: getInitialStep(mode),
-    cardCache: get().cardCache,
-  }),
+  setMode: (mode) =>
+    set({
+      ...INITIAL_STATE,
+      mode,
+      step: MODE_STEPS_MAP[mode][0],
+      cardCache: get().cardCache,
+    }),
 
   nextStep: () => {
     const { mode, step } = get()
-    const steps = MODE_STEPS[mode]
+    const steps = MODE_STEPS_MAP[mode]
     const i = steps.indexOf(step)
     if (i < steps.length - 1) set({ step: steps[i + 1] })
   },
 
   prevStep: () => {
     const { mode, step } = get()
-    const steps = MODE_STEPS[mode]
+    const steps = MODE_STEPS_MAP[mode]
     const i = steps.indexOf(step)
     if (i > 0) set({ step: steps[i - 1] })
   },
 
   goToStep: (step) => set({ step }),
 
-  setSelectedSpread:  (spread)  => set({ selectedSpread: spread }),
+  setSelectedSpread: (spread) => set({ selectedSpread: spread }),
   setSelectedPersona: (persona) => set({ selectedPersona: persona }),
-  setQuestion:        (q)       => set({ question: q }),
-  setDrawnCards:      (cards)   => set({ drawnCards: cards }),
+  setQuestion: (q) => set({ question: q }),
+  setDrawnCards: (cards) => set({ drawnCards: cards }),
 
-  setRecommendedSpread:  (data)    => set({ recommendedSpread: data }),
+  setRecommendedSpread: (data) => set({ recommendedSpread: data }),
   setIsLoadingRecommend: (loading) => set({ isLoadingRecommend: loading }),
 
-  // 一次設定（非串流）
-  setInterpretation: (text, sessionId) => set({ interpretation: text, sessionId }),
+  setInterpretation: (text, sessionId) =>
+    set({ interpretation: text, sessionId }),
 
-  // 串流用：先清空
   clearInterpretation: () => set({ interpretation: '' }),
 
-  // 串流用：逐字累加
   appendInterpretation: (text) =>
-    set((state) => ({ interpretation: state.interpretation + text })),
+    set((state) => ({
+      interpretation: state.interpretation + text,
+    })),
 
-  setSessionId:          (id)      => set({ sessionId: id }),
+  setSessionId: (id) => set({ sessionId: id }),
   setIsLoadingInterpret: (loading) => set({ isLoadingInterpret: loading }),
-  setIsStreaming:        (s)       => set({ isStreaming: s }),
+  setIsStreaming: (s) => set({ isStreaming: s }),
 
   addChatMessage: (msg) =>
-    set((state) => ({ chatHistory: [...state.chatHistory, msg] })),
+    set((state) => ({
+      chatHistory: [...state.chatHistory, msg],
+    })),
+
   setIsChatLoading: (loading) => set({ isChatLoading: loading }),
 
   setCardCache: (cards) =>
-    set({ cardCache: Object.fromEntries(cards.map((c) => [c.id, c])) }),
+    set({
+      cardCache: Object.fromEntries(cards.map((c) => [c.id, c])),
+    }),
 
-  reset: () => set((state) => ({
-    ...INITIAL_STATE,
-    mode:      state.mode,
-    step:      getInitialStep(state.mode),
-    cardCache: state.cardCache,
-  })),
+  reset: () =>
+    set((state) => ({
+      ...INITIAL_STATE,
+      mode: state.mode,
+      step: MODE_STEPS_MAP[state.mode][0],
+      cardCache: state.cardCache,
+    })),
 }))
