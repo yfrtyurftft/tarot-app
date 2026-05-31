@@ -1,11 +1,11 @@
 # ============================================================
-# ai_handler.py — Gemini AI 處理器（自然人設版）
-# 強化 Prompt 讓 AI 像真實占卜師說話，避免 markdown 格式
+# ai_handler.py — Gemini AI 處理器（支援 SSE 串流輸出）
 # ============================================================
 
 import os
 import uuid
 import json
+from typing import Generator
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -26,7 +26,7 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 SESSION_STORE: dict[str, dict] = {}
 
-# ── 三位占卜師人設（加強自然語氣指令）────────────────────────
+# ── 三位占卜師人設 ─────────────────────────────────────────
 PERSONAS: dict[str, Persona] = {
     "mystic_witch": Persona(
         id="mystic_witch",
@@ -111,6 +111,7 @@ MODE_CONTEXT: dict[str, str] = {
 }
 
 
+# ── 1. 推薦牌陣（非串流）──────────────────────────────────
 async def recommend_spread(question: str, persona_id: str) -> RecommendSpreadResponse:
     persona = get_persona(persona_id)
     spread_options = "\n".join(
@@ -130,7 +131,10 @@ async def recommend_spread(question: str, persona_id: str) -> RecommendSpreadRes
 }}"""
 
     model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=persona.system_prompt)
-    response = model.generate_content(prompt)
+    response = model.generate_content(
+        prompt,
+        generation_config=genai.GenerationConfig(max_output_tokens=200)
+    )
     raw = response.text.strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -149,10 +153,20 @@ async def recommend_spread(question: str, persona_id: str) -> RecommendSpreadRes
     )
 
 
-async def interpret_cards(
-    question: str, persona_id: str,
-    cards: list[DrawnCard], mode: str, spread_id: str,
-) -> InterpretResponse:
+# ── 2. 解讀抽卡結果（SSE 串流）────────────────────────────
+def stream_interpret(
+    question: str,
+    persona_id: str,
+    cards: list[DrawnCard],
+    mode: str,
+    spread_id: str,
+) -> Generator[str, None, None]:
+    """
+    SSE 串流格式：
+    data: {"type": "session", "session_id": "xxx"}
+    data: {"type": "text", "text": "占卜師說的話..."}
+    data: {"type": "done"}
+    """
     persona = get_persona(persona_id)
     spread = SPREAD_BY_ID.get(spread_id)
     spread_name = spread.name_zh if spread else "塔羅牌陣"
@@ -160,6 +174,10 @@ async def interpret_cards(
     cards_text = format_cards_for_prompt(cards)
     session_id = str(uuid.uuid4())
 
+    # 先送出 session_id
+    yield f"data: {json.dumps({'type': 'session', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+
+    # 建立 prompt
     if mode == "daily":
         user_prompt = f"""提問者今天抽了一張今日運勢牌：
 
@@ -182,24 +200,47 @@ async def interpret_cards(
 不要用任何標題、符號、條列或數字，就像在說話，不是在寫報告。
 讓對方感覺你真的看見他們的處境，說出打動人心的話。"""
 
-    model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=persona.system_prompt)
+    # 開始串流
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=persona.system_prompt
+    )
     chat = model.start_chat(history=[])
-    response = chat.send_message(user_prompt)
-    answer = response.text.strip()
 
+    response = chat.send_message(
+        user_prompt,
+        stream=True,
+        generation_config=genai.GenerationConfig(max_output_tokens=700)
+    )
+
+    for chunk in response:
+        text = getattr(chunk, "text", "")
+        if text:
+            yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
+
+    # 儲存 session
     SESSION_STORE[session_id] = {
         "history": chat.history,
         "persona_id": persona_id,
         "question": question,
         "mode": mode,
     }
-    return InterpretResponse(answer=answer, session_id=session_id)
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
-async def continue_chat(session_id: str, message: str, persona_id: str) -> ChatResponse:
+# ── 3. 聊天延續（SSE 串流）────────────────────────────────
+def stream_chat(
+    session_id: str,
+    message: str,
+    persona_id: str,
+) -> Generator[str, None, None]:
     session = SESSION_STORE.get(session_id)
     persona = get_persona(persona_id)
-    model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=persona.system_prompt)
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=persona.system_prompt
+    )
 
     if session:
         chat = model.start_chat(history=session["history"])
@@ -207,11 +248,20 @@ async def continue_chat(session_id: str, message: str, persona_id: str) -> ChatR
         chat = model.start_chat(history=[])
         message = f"（這是新的對話）\n{message}"
 
-    # 提醒 AI 繼續保持自然語氣
     wrapped = f"{message}\n\n（請繼續用自然的說話方式回覆，不要用任何標題、符號或條列式）"
-    response = chat.send_message(wrapped)
-    answer = response.text.strip()
+
+    response = chat.send_message(
+        wrapped,
+        stream=True,
+        generation_config=genai.GenerationConfig(max_output_tokens=400)
+    )
+
+    for chunk in response:
+        text = getattr(chunk, "text", "")
+        if text:
+            yield f"data: {json.dumps({'type': 'text', 'text': text}, ensure_ascii=False)}\n\n"
 
     if session:
         SESSION_STORE[session_id]["history"] = chat.history
-    return ChatResponse(answer=answer)
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
