@@ -133,15 +133,21 @@ async def recommend_spread(question: str, persona_id: str) -> RecommendSpreadRes
     model = genai.GenerativeModel(model_name=GEMINI_MODEL, system_instruction=persona.system_prompt)
     response = model.generate_content(
         prompt,
-        generation_config=genai.GenerationConfig(max_output_tokens=200)
+        generation_config=genai.GenerationConfig(
+            max_output_tokens=400,
+            response_mime_type="application/json"   # 強制 Gemini 回傳合法 JSON
+        )
     )
     raw = response.text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    raw = raw.strip()
-    data = json.loads(raw)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        # 備用：嘗試清除 markdown 包裝後再解析
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        data = json.loads(raw.strip())
     spread = SPREAD_BY_ID.get(data["spread_id"])
     if not spread:
         spread = SPREAD_BY_ID["three-card"]
