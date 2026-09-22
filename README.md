@@ -8,7 +8,7 @@
 
 | 服務 | 網址 |
 |------|------|
-| 前端（Vercel） | https://tarot-app-ten-dun.vercel.app |(api key 已停用)|
+| 前端（Vercel） | https://tarot-app-ten-dun.vercel.app (api key 已停用)|
 | 後端（Railway） | https://tarot-appbackend-production.up.railway.app |
 
 ---
